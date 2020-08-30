@@ -1,0 +1,8 @@
+/.idea
+/__pycache__
+/logs
+/VOCdevkit
+/2088_test.txt
+/2088_trainval.txt
+mAP/
+mAP_result/
