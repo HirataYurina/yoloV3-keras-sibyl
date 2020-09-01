@@ -158,14 +158,9 @@ def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
 #   boxes_score = boxes_confidence * boxes_class_probs
 # ------------------------------------------------------#
 def yolo_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
-    # 将预测值调成真实值
-    # box_xy对应框的中心点
-    # box_wh对应框的宽和高
-    # -1,13,13,3,2; -1,13,13,3,2; -1,13,13,3,1; -1,13,13,3,80
+    # wrap decoding functions
     box_xy, box_wh, box_confidence, box_class_probs = yolo_head(feats, anchors, num_classes, input_shape)
-    # 将box_xy、和box_wh调节成y_min,y_max,xmin,xmax
     boxes = yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape)
-    # 获得得分和box
     boxes = K.reshape(boxes, [-1, 4])
     box_scores = box_confidence * box_class_probs
     box_scores = K.reshape(box_scores, [-1, num_classes])
