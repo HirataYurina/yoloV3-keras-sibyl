@@ -15,7 +15,7 @@
 import tensorflow as tf
 from keras import backend as K
 import math
-from nets.yolo3 import yolo_head
+from nets.gaussian_yolo3 import yolo_head
 
 
 # ---------------------------------------------------
@@ -53,122 +53,6 @@ def box_iou(b1, b2):
     return iou
 
 
-def box_diou(b1, b2):
-    """Calculate DIoU loss on anchor boxes
-    Reference Paper:
-        "Distance-IoU Loss: Faster and Better Learning for Bounding Box Regression"
-        https://arxiv.org/abs/1911.08287
-
-    Args:
-        b1: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
-        b2: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
-
-    Returns:
-        diou: tensor, shape=(batch, feat_w, feat_h, anchor_num, 1)
-
-    """
-    b1_xy = b1[..., :2]
-    b1_wh = b1[..., 2:4]
-    b1_wh_half = b1_wh/2.
-    b1_mins = b1_xy - b1_wh_half
-    b1_maxes = b1_xy + b1_wh_half
-
-    b2_xy = b2[..., :2]
-    b2_wh = b2[..., 2:4]
-    b2_wh_half = b2_wh/2.
-    b2_mins = b2_xy - b2_wh_half
-    b2_maxes = b2_xy + b2_wh_half
-
-    intersect_mins = K.maximum(b1_mins, b2_mins)
-    intersect_maxes = K.minimum(b1_maxes, b2_maxes)
-    intersect_wh = K.maximum(intersect_maxes - intersect_mins, 0.)
-    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
-    b1_area = b1_wh[..., 0] * b1_wh[..., 1]
-    b2_area = b2_wh[..., 0] * b2_wh[..., 1]
-    union_area = b1_area + b2_area - intersect_area
-
-    # calculate IoU, add epsilon in denominator to avoid dividing by 0
-    iou = intersect_area / (union_area + K.epsilon())
-
-    # box center distance
-    center_distance = K.sum(K.square(b1_xy - b2_xy), axis=-1)
-    # get enclosed area
-    enclose_mins = K.minimum(b1_mins, b2_mins)
-    enclose_maxes = K.maximum(b1_maxes, b2_maxes)
-    enclose_wh = K.maximum(enclose_maxes - enclose_mins, 0.0)
-    # get enclosed diagonal distance
-    enclose_diagonal = K.sum(K.square(enclose_wh), axis=-1)
-    # calculate DIoU, add epsilon in denominator to avoid dividing by 0
-    diou = iou - 1.0 * (center_distance) / (enclose_diagonal + K.epsilon())
-
-    # calculate param v and alpha to extend to CIoU
-    # v = 4*K.square(tf.math.atan2(b1_wh[..., 0], b1_wh[..., 1]) -
-    # tf.math.atan2(b2_wh[..., 0], b2_wh[..., 1])) / (math.pi * math.pi)
-    # alpha = v / (1.0 - iou + v)
-    # diou = diou - alpha*v
-
-    diou = K.expand_dims(diou, -1)
-    return diou
-
-
-def box_ciou(b1, b2):
-    """    Calculate DIoU loss on anchor boxes
-    Reference Paper:
-        "Distance-IoU Loss: Faster and Better Learning for Bounding Box Regression"
-        https://arxiv.org/abs/1911.08287
-
-    Args:
-        b1: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
-        b2: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
-
-    Returns:
-        diou: tensor, shape=(batch, feat_w, feat_h, anchor_num, 1)
-    """
-    b1_xy = b1[..., :2]
-    b1_wh = b1[..., 2:4]
-    b1_wh_half = b1_wh / 2.
-    b1_mins = b1_xy - b1_wh_half
-    b1_maxes = b1_xy + b1_wh_half
-
-    b2_xy = b2[..., :2]
-    b2_wh = b2[..., 2:4]
-    b2_wh_half = b2_wh / 2.
-    b2_mins = b2_xy - b2_wh_half
-    b2_maxes = b2_xy + b2_wh_half
-
-    intersect_mins = K.maximum(b1_mins, b2_mins)
-    intersect_maxes = K.minimum(b1_maxes, b2_maxes)
-    intersect_wh = K.maximum(intersect_maxes - intersect_mins, 0.)
-    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
-    b1_area = b1_wh[..., 0] * b1_wh[..., 1]
-    b2_area = b2_wh[..., 0] * b2_wh[..., 1]
-    union_area = b1_area + b2_area - intersect_area
-    # calculate IoU, add epsilon in denominator to avoid dividing by 0
-    iou = intersect_area / (union_area + K.epsilon())
-
-    # box center distance
-    center_distance = K.sum(K.square(b1_xy - b2_xy), axis=-1)
-    # get enclosed area
-    enclose_mins = K.minimum(b1_mins, b2_mins)
-    enclose_maxes = K.maximum(b1_maxes, b2_maxes)
-    enclose_wh = K.maximum(enclose_maxes - enclose_mins, 0.0)
-    # get enclosed diagonal distance
-    enclose_diagonal = K.sum(K.square(enclose_wh), axis=-1)
-    # calculate DIoU, add epsilon in denominator to avoid dividing by 0
-    diou = iou - 1.0 * center_distance / (enclose_diagonal + K.epsilon())
-
-    # calculate param v and alpha to extend to CIoU
-    v = 4 * K.square(tf.math.atan2(b1_wh[..., 0], b1_wh[..., 1]) -
-                     tf.math.atan2(b2_wh[..., 0], b2_wh[..., 1])) / (math.pi * math.pi)
-    # alpha = v / (1.0 - iou + v)
-    # TODO: add epsilon in denominator to avoid dividing by 0
-    alpha = v / (1.0 - iou + v + K.epsilon())
-    ciou = diou - alpha * v
-
-    ciou = K.expand_dims(ciou, -1)
-    return ciou
-
-
 def sigmoid_focal_loss(y_true, y_pred, gamma=2.0, alpha=0.25):
     """Compute sigmoid focal loss.
     Reference Paper:
@@ -199,32 +83,34 @@ def sigmoid_focal_loss(y_true, y_pred, gamma=2.0, alpha=0.25):
     return sigmoid_focal_loss
 
 
+def gaussian_distribution(mu, sigma, x):
+    prob = (1 / (K.sqrt(2.0 * math.pi) + K.epsilon())) * \
+           K.exp(-1 * K.square(x - mu) / (2 * K.square(sigma) + K.epsilon()))
+
+    return prob
+
+
 # ---------------------------------------------------------------------------------------
 # loss compute
 # support:
 #   focal confidence loss
 #   focal class loss
-#   diou loss
-#   ciou loss
+#   gaussian loss
 # ---------------------------------------------------------------------------------------
-def yolo_loss(args,
-              anchors,
-              num_classes,
-              ignore_thresh=.5,
-              print_loss=False,
-              use_focal_confidence_loss=False,
-              use_focal_class_loss=False,
-              use_diou=False,
-              use_ciou=True):
-
-    assert (use_ciou or use_diou) and (not (use_ciou and use_diou)), 'can only use one of diou loss and ciou loss'
+def gaussian_yolo_loss(args,
+                       anchors,
+                       num_classes,
+                       ignore_thresh=.5,
+                       print_loss=False,
+                       use_focal_confidence_loss=False,
+                       use_focal_class_loss=False):
 
     # 3 layers
     num_layers = len(anchors)//3
 
     # args = [*model_body.output, *y_true]
     # y_true: [(m, 13, 13, 3, 85), (m, 26, 26, 3, 85), (m, 52, 52, 3, 85)]
-    # yolo_outputs: [(m, 13, 13, 3, 85), (m, 26, 26, 3, 85), (m, 52, 52, 3, 85)]
+    # yolo_outputs: [(m, 13, 13, 3, 89), (m, 26, 26, 3, 89), (m, 52, 52, 3, 89)]
     y_true = args[num_layers:]
     yolo_outputs = args[:num_layers]
 
@@ -290,17 +176,34 @@ def yolo_loss(args,
         ignore_mask = K.expand_dims(ignore_mask, -1)
 
         # encode the gt bounding boxes
-        # raw_true_xy = y_true[l][..., :2]*grid_shapes[l][:] - grid
-        # raw_true_wh = K.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1])
+        raw_true_xy = y_true[l][..., :2]*grid_shapes[l][:] - grid
+        raw_true_wh = K.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1])
 
+        # #######################################
         # use switch to exchange -inf to 0
-        # raw_true_wh = K.switch(object_mask, raw_true_wh, K.zeros_like(raw_true_wh))
+        # 0 * inf = NAN
+        # #######################################
+        raw_true_wh = K.switch(object_mask, raw_true_wh, K.zeros_like(raw_true_wh))
 
         # TODO: yolo3 uses this scale to penalize errors in small gt bounding boxes.
         box_loss_scale = 2 - y_true[l][..., 2:3] * y_true[l][..., 3:4]
 
-        # xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy,
-        #                                                                raw_pred[...,0:2], from_logits=True)
+        x_loss = (-1) * object_mask * box_loss_scale * \
+            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 0]),
+                                        sigma=K.sigmoid(raw_pred[..., 4]),
+                                        x=raw_true_xy[..., 0]))
+        y_loss = (-1) * object_mask * box_loss_scale * \
+            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 1]),
+                                        sigma=K.sigmoid(raw_pred[..., 5]),
+                                        x=raw_true_xy[..., 1]))
+        w_loss = (-1) * object_mask * box_loss_scale * \
+            K.log(gaussian_distribution(mu=raw_pred[..., 2],
+                                        sigma=K.sigmoid(raw_pred[..., 6]),
+                                        x=raw_true_wh[..., 0]))
+        h_loss = (-1) * object_mask * box_loss_scale * \
+            K.log(gaussian_distribution(mu=raw_pred[..., 3],
+                                        sigma=K.sigmoid(raw_pred[..., 7]),
+                                        x=raw_true_wh[..., 1]))
         # wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh-raw_pred[...,2:4])
 
         # use focal confidence loss
@@ -317,25 +220,14 @@ def yolo_loss(args,
         else:
             class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[..., 5:], from_logits=True)
 
-        iou_loss = 0
-
-        # use diou loss or ciou loss
-        raw_true_boxes = y_true[l][..., 0:4]
-        if use_diou:
-            diou = box_diou(pred_box, raw_true_boxes)
-            diou_loss = object_mask * box_loss_scale * (1 - diou)
-            iou_loss = K.sum(diou_loss) / mf
-        elif use_ciou:
-            ciou = box_ciou(pred_box, raw_true_boxes)
-            ciou_loss = object_mask * box_loss_scale * (1 - ciou)
-            iou_loss = K.sum(ciou_loss) / mf
-
-        # xy_loss = K.sum(xy_loss) / mf
-        # wh_loss = K.sum(wh_loss) / mf
+        x_loss = K.sum(x_loss) / mf
+        y_loss = K.sum(y_loss) / mf
+        w_loss = K.sum(w_loss) / mf
+        h_loss = K.sum(h_loss) / mf
         confidence_loss = K.sum(confidence_loss) / mf
         class_loss = K.sum(class_loss) / mf
-        loss += iou_loss + confidence_loss + class_loss
+        loss += x_loss + y_loss + w_loss + h_loss + confidence_loss + class_loss
         if print_loss:
-            loss = tf.Print(loss, [loss, iou_loss, confidence_loss, class_loss, K.sum(ignore_mask)], message='loss: ')
+            loss = tf.Print(loss, [loss, x_loss, y_loss, w_loss, h_loss,
+                                   confidence_loss, class_loss, K.sum(ignore_mask)], message='loss: ')
     return loss
-
