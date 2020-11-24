@@ -25,12 +25,15 @@ class MapYolo(YOLO):
     """
 
     def __init__(self, **kwargs):
-        super(MapYolo, self).__init__(**kwargs)
-        self.scores = CONFIG.DETECT.SCORE
-        self.iou = CONFIG.DETECT.IOU
         self.resolution = CONFIG.DETECT.RESOLUTION
+        super(MapYolo, self).__init__(**kwargs)
+        # self.scores = CONFIG.DETECT.SCORE
+        # self.iou = CONFIG.DETECT.IOU
 
     def generate(self):
+        score = CONFIG.DETECT.SCORE
+        iou = CONFIG.DETECT.IOU
+
         model_path = os.path.expanduser(self.model_path)
         assert model_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
@@ -66,7 +69,7 @@ class MapYolo(YOLO):
 
         boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors,
                                            num_classes, self.input_image_shape,
-                                           score_threshold=self.score, iou_threshold=self.iou)
+                                           score_threshold=score, iou_threshold=iou)
         return boxes, scores, classes
 
     def detect_image(self, image_id, image):
@@ -74,7 +77,7 @@ class MapYolo(YOLO):
         f = open("./mAP/detection-results/" + image_id + ".txt", "w")
 
         # use letter box to resize the original img
-        new_image_size = self.resulition
+        new_image_size = self.resolution
         boxed_image = letterbox_image(image, new_image_size)
         image_data = np.array(boxed_image, dtype='float32')
         image_data /= 255.

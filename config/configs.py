@@ -13,16 +13,16 @@ CONFIG = easydict.EasyDict()
 CONFIG.DETECT = easydict.EasyDict()
 
 CONFIG.DETECT.SCORE = 0.3
-CONFIG.DETECT.IOU = 0.5
+CONFIG.DETECT.IOU = 0.43
 CONFIG.DETECT.RESOLUTION = (416, 416)
-CONFIG.DETECT.mAP_THRES = 0.5
+CONFIG.DETECT.mAP_THRES = 0.85
 
 
 # prediction
 CONFIG.PREDICT = easydict.EasyDict()
-CONFIG.PREDICT.WEIGHTS = 'logs/yolo3_weights.h5'
+CONFIG.PREDICT.WEIGHTS = 'logs/fourth_training/ep290-loss6.123.h5'
 CONFIG.PREDICT.ANCHOR_PATH = 'model_data/yolo_anchors.txt'
-CONFIG.PREDICT.CLASS_PATH = 'model_data/coco_classes.txt'
+CONFIG.PREDICT.CLASS_PATH = 'model_data/danger_source_classes.txt'
 CONFIG.PREDICT.SCORE = 0.3
 CONFIG.PREDICT.IOU = 0.3
 CONFIG.PREDICT.RESOLUTION = (512, 512)
