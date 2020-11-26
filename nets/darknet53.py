@@ -12,6 +12,9 @@ from keras.layers.normalization import BatchNormalization
 from keras.regularizers import l2
 from utils.utils import compose
 from nets.mish import Mish
+import keras.backend as K
+import keras.layers as layers
+import tensorflow as tf
 
 
 # --------------------------------------------------
@@ -134,14 +137,111 @@ def csp_darknet_body(x):
     return feat1, feat2, feat3
 
 
+class WeightsNormalize(layers.Layer):
+
+    def __init__(self, **kwargs):
+        super(WeightsNormalize, self).__init__(**kwargs)
+        self.add = layers.Add()
+
+    def call(self, inputs, **kwargs):
+        input1 = K.exp(inputs[0])
+        input2 = K.exp(inputs[1])
+        input3 = K.exp(inputs[2])
+
+        inputs_sum = self.add([input1, input2, input3])
+
+        input1 = input1 / inputs_sum
+        input2 = input2 / inputs_sum
+        input3 = input3 / inputs_sum
+
+        return [input1, input2, input3]
+
+
+class FeatureFusion(layers.Layer):
+
+    def __init__(self, **kwargs):
+        super(FeatureFusion, self).__init__(**kwargs)
+
+    def call(self, inputs, **kwargs):
+        results = tf.multiply(inputs[0], inputs[1]) + \
+                  tf.multiply(inputs[2], inputs[3]) + \
+                  tf.multiply(inputs[4], inputs[5])
+
+        return results
+
+
+# ---------------------------------------------------
+#   body of darknet53
+#   ASFF + Darknet53
+# ---------------------------------------------------
+def darknet_asff_body(x):
+    x = DarknetConv2D_BN_Leaky(32, (3, 3))(x)
+    x = resblock_body(x, 64, 1)
+    x = resblock_body(x, 128, 2)
+    x = resblock_body(x, 256, 8)
+    feat1 = x  # 52*52*256
+    x = resblock_body(x, 512, 8)
+    feat2 = x  # 26*26*512
+    x = resblock_body(x, 1024, 4)
+    feat3 = x  # 13*13*1024
+
+    # apply adaptive spatial feature fusion
+    feat3_2 = Conv2D(512, 1, padding='same', name='feat3_2')(feat3)
+    feat3_2 = layers.UpSampling2D(size=(2, 2), name='feat3_2_upsample')(feat3_2)
+
+    feat3_1 = Conv2D(256, 1, padding='same', name='feat3_1')(feat3)
+    feat3_1 = layers.UpSampling2D(size=(4, 4), name='feat3_1_upsample')(feat3_1)
+
+    feat2_1 = Conv2D(256, 1, padding='same', name='feat2_1')(feat2)
+    feat2_1 = layers.UpSampling2D(size=(2, 2), name='feat2_1_upsample')(feat2_1)
+
+    feat2_3 = Conv2D(1024, 3, strides=2, padding='same', name='feat2_3')(feat2)
+
+    feat1_2 = Conv2D(512, 3, strides=2, padding='same', name='feat1_2')(feat1)
+
+    feat1_3 = Conv2D(1024, 3, strides=2, padding='same', name='feat1_3')(feat1)
+    feat1_3 = layers.MaxPool2D(pool_size=(3, 3), strides=2, padding='same', name='feat1_3_pool')(feat1_3)
+
+    # compute importance weights
+    feat1_weights = Conv2D(256, 1, name='feat1_weights')(feat1)
+    feat2_1_weights = Conv2D(256, 1, name='feat2_1_weights')(feat2_1)
+    feat3_1_weights = Conv2D(256, 1, name='feat3_1_weights')(feat3_1)
+
+    feat2_weights = Conv2D(512, 1, name='feat2_weights')(feat2)
+    feat3_2_weights = Conv2D(512, 1, name='feat3_2_weights')(feat3_2)
+    feat1_2_weights = Conv2D(512, 1, name='feat1_2_weights')(feat1_2)
+
+    feat3_weights = Conv2D(1024, 1, name='feat3_weights')(feat3)
+    feat2_3_weights = Conv2D(1024, 1, name='feat2_3_weights')(feat2_3)
+    feat1_3_weights = Conv2D(1024, 1, name='feat1_3_weights')(feat1_3)
+
+    feat1_weights, feat2_1_weights, feat3_1_weights = WeightsNormalize()([feat1_weights,
+                                                                          feat2_1_weights,
+                                                                          feat3_1_weights])
+    feat2_weights, feat3_2_weights, feat1_2_weights = WeightsNormalize()([feat2_weights,
+                                                                          feat3_2_weights,
+                                                                          feat1_2_weights])
+
+    feat3_weights, feat2_3_weights, feat1_3_weights = WeightsNormalize()([feat3_weights,
+                                                                          feat2_3_weights,
+                                                                          feat1_3_weights])
+    feat1_fusion = FeatureFusion()([feat1, feat1_weights, feat2_1, feat2_1_weights, feat3_1, feat3_1_weights])
+    feat2_fusion = FeatureFusion()([feat2, feat2_weights, feat1_2, feat1_2_weights, feat3_2, feat3_2_weights])
+    feat3_fusion = FeatureFusion()([feat3, feat3_weights, feat1_3, feat1_3_weights, feat2_3, feat2_3_weights])
+
+    return feat1_fusion, feat2_fusion, feat3_fusion
+
+
 if __name__ == '__main__':
     import keras
 
     inputs_ = keras.Input(shape=(416, 416, 3))
-    _, _, feature3_ = csp_darknet_body(inputs_)
+    feature1_, feature2_, feature3_ = darknet_asff_body(inputs_)  # Trainable params: 53,897,696
+    # feature1_, feature2_, feature3_ = csp_darknet_body(inputs_)  # Trainable params: 26,617,184
+    # feature1_, feature2_, feature3_ = darknet_body(inputs_)  # Trainable params: 40,584,928
 
     # backbone
-    backbone = keras.Model(inputs_, feature3_)
+    backbone = keras.Model(inputs_, [feature1_, feature2_, feature3_])
 
     # darknet53 trainable params: 40,584,928
     # cspdarknet 53 trainable params: 26,617,184
