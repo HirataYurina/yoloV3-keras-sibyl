@@ -5,6 +5,10 @@
 # filename:configs.py
 # software: PyCharm
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.dirname(os.getcwd()) + os.path.sep + '.'))
+
 import numpy as np
 import tensorflow as tf
 import keras.backend as K
