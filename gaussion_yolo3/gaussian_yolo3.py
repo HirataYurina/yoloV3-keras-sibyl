@@ -91,7 +91,7 @@ def yolo_head(feats,
     grid = K.concatenate([grid_x, grid_y])
     grid = K.cast(grid, K.dtype(feats))
 
-    # (batch_size, 13, 13, 3, 85)
+    # (batch_size, 13, 13, 3, 89)
     feats = K.reshape(feats, [-1, grid_shape[0], grid_shape[1], num_anchors, num_classes + 9])
 
     # decode prediction

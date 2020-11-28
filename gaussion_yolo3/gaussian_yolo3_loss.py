@@ -15,7 +15,7 @@
 import tensorflow as tf
 from keras import backend as K
 import math
-from nets.gaussian_yolo3 import yolo_head
+from gaussion_yolo3.gaussian_yolo3 import yolo_head
 
 
 # ---------------------------------------------------
@@ -84,7 +84,7 @@ def sigmoid_focal_loss(y_true, y_pred, gamma=2.0, alpha=0.25):
 
 
 def gaussian_distribution(mu, sigma, x):
-    prob = (1 / (K.sqrt(2.0 * math.pi) + K.epsilon())) * \
+    prob = (1 / (K.sqrt(K.constant(2.0 * math.pi, dtype='float32')) * sigma + K.epsilon())) * \
            K.exp(-1 * K.square(x - mu) / (2 * K.square(sigma) + K.epsilon()))
 
     return prob
@@ -189,36 +189,35 @@ def gaussian_yolo_loss(args,
         box_loss_scale = 2 - y_true[l][..., 2:3] * y_true[l][..., 3:4]
 
         x_loss = (-1) * object_mask * box_loss_scale * \
-            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 0]),
-                                        sigma=K.sigmoid(raw_pred[..., 4]),
-                                        x=raw_true_xy[..., 0]))
+            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 0:1]),
+                                        sigma=K.sigmoid(raw_pred[..., 4:5]),
+                                        x=raw_true_xy[..., 0:1]) + K.epsilon())
         y_loss = (-1) * object_mask * box_loss_scale * \
-            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 1]),
-                                        sigma=K.sigmoid(raw_pred[..., 5]),
-                                        x=raw_true_xy[..., 1]))
+            K.log(gaussian_distribution(mu=K.sigmoid(raw_pred[..., 1:2]),
+                                        sigma=K.sigmoid(raw_pred[..., 5:6]),
+                                        x=raw_true_xy[..., 1:2]) + K.epsilon())
         w_loss = (-1) * object_mask * box_loss_scale * \
-            K.log(gaussian_distribution(mu=raw_pred[..., 2],
-                                        sigma=K.sigmoid(raw_pred[..., 6]),
-                                        x=raw_true_wh[..., 0]))
+            K.log(gaussian_distribution(mu=raw_pred[..., 2:3],
+                                        sigma=K.sigmoid(raw_pred[..., 6:7]),
+                                        x=raw_true_wh[..., 0:1]) + K.epsilon())
         h_loss = (-1) * object_mask * box_loss_scale * \
-            K.log(gaussian_distribution(mu=raw_pred[..., 3],
-                                        sigma=K.sigmoid(raw_pred[..., 7]),
-                                        x=raw_true_wh[..., 1]))
-        # wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh-raw_pred[...,2:4])
+            K.log(gaussian_distribution(mu=raw_pred[..., 3:4],
+                                        sigma=K.sigmoid(raw_pred[..., 7:8]),
+                                        x=raw_true_wh[..., 1:2]) + K.epsilon())
 
         # use focal confidence loss
         if use_focal_confidence_loss:
-            confidence_loss = sigmoid_focal_loss(object_mask, raw_pred[..., 4:5])
+            confidence_loss = sigmoid_focal_loss(object_mask, raw_pred[..., 8:9])
         else:
             confidence_loss = object_mask * K.binary_crossentropy(object_mask,
-                                                                  raw_pred[..., 4:5], from_logits=True) + \
+                                                                  raw_pred[..., 8:9], from_logits=True) + \
                 (1-object_mask) * K.binary_crossentropy(object_mask,
-                                                        raw_pred[..., 4:5], from_logits=True) * ignore_mask
+                                                        raw_pred[..., 8:9], from_logits=True) * ignore_mask
         # use focal class loss
         if use_focal_class_loss:
-            class_loss = sigmoid_focal_loss(true_class_probs, raw_pred[..., 5:])
+            class_loss = sigmoid_focal_loss(true_class_probs, raw_pred[..., 9:])
         else:
-            class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[..., 5:], from_logits=True)
+            class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[..., 9:], from_logits=True)
 
         x_loss = K.sum(x_loss) / mf
         y_loss = K.sum(y_loss) / mf
