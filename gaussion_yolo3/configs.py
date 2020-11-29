@@ -20,12 +20,12 @@ CONFIG.DETECT.mAP_THRES = 0.85
 
 # prediction
 CONFIG.PREDICT = easydict.EasyDict()
-CONFIG.PREDICT.WEIGHTS = 'logs/fourth_training/ep290-loss6.123.h5'
-CONFIG.PREDICT.ANCHOR_PATH = 'model_data/yolo_anchors.txt'
-CONFIG.PREDICT.CLASS_PATH = 'model_data/danger_source_classes.txt'
+CONFIG.PREDICT.WEIGHTS = '../logs/gaussian_yolo3/ep340-loss-5.042.h5'
+CONFIG.PREDICT.ANCHOR_PATH = '../model_data/yolo_anchors.txt'
+CONFIG.PREDICT.CLASS_PATH = '../model_data/danger_source_classes.txt'
 CONFIG.PREDICT.SCORE = 0.3
-CONFIG.PREDICT.IOU = 0.3
-CONFIG.PREDICT.RESOLUTION = (512, 512)
+CONFIG.PREDICT.IOU = 0.43
+CONFIG.PREDICT.RESOLUTION = (416, 416)
 CONFIG.PREDICT.MAX_BOXES = 40
 
 # train

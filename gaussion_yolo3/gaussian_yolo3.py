@@ -11,7 +11,7 @@ from keras.layers import UpSampling2D, Concatenate
 from keras.models import Model
 from nets.darknet53 import darknet_body
 from utils.utils import compose
-
+import tensorflow as tf
 from nets.darknet53 import DarknetConv2D_BN_Leaky
 
 
@@ -105,3 +105,106 @@ def yolo_head(feats,
     if calc_loss:
         return grid, feats, box_xy, box_wh
     return box_xy, box_wh, box_confidence, box_class_probs
+
+
+# ---------------------------------------------------
+#   correct boxes
+#   inputs coordinate -> original image coordinate
+# ---------------------------------------------------
+def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
+    box_yx = box_xy[..., ::-1]
+    box_hw = box_wh[..., ::-1]
+
+    input_shape = K.cast(input_shape, K.dtype(box_yx))
+    image_shape = K.cast(image_shape, K.dtype(box_yx))
+
+    new_shape = K.round(image_shape * K.min(input_shape / image_shape))
+    offset = (input_shape - new_shape) / 2. / input_shape
+    scale = input_shape / new_shape
+
+    box_yx = (box_yx - offset) * scale
+    box_hw *= scale
+
+    box_mins = box_yx - (box_hw / 2.)
+    box_maxes = box_yx + (box_hw / 2.)
+    boxes = K.concatenate([
+        box_mins[..., 0:1],  # y_min
+        box_mins[..., 1:2],  # x_min
+        box_maxes[..., 0:1],  # y_max
+        box_maxes[..., 1:2]  # x_max
+    ])
+
+    boxes *= K.concatenate([image_shape, image_shape])
+    return boxes
+
+
+# ------------------------------------------------------#
+#   boxes_score = boxes_confidence * boxes_class_probs
+# ------------------------------------------------------#
+def yolo_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
+    # wrap decoding functions
+    box_xy, box_wh, box_confidence, box_class_probs = yolo_head(feats, anchors, num_classes, input_shape)
+    boxes = yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape)
+    boxes = K.reshape(boxes, [-1, 4])
+    box_scores = box_confidence * box_class_probs
+    box_scores = K.reshape(box_scores, [-1, num_classes])
+    return boxes, box_scores
+
+
+# ------------------------------------------------------------------------- #
+#   raw_outputs -> decode(yolo_head) -> correct boxes -> nms -> final outputs
+# ------------------------------------------------------------------------- #
+def yolo_eval(yolo_outputs,
+              anchors,
+              num_classes,
+              image_shape,
+              max_boxes=20,
+              score_threshold=.6,
+              iou_threshold=.5):
+
+    num_layers = len(yolo_outputs)
+    # stage3 -> [6, 7, 8]
+    # stage2 -> [3, 4, 5]
+    # stage1 -> [0, 1, 2]
+    anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
+
+    input_shape = K.shape(yolo_outputs[0])[1:3] * 32
+    boxes = []
+    box_scores = []
+
+    # perform decode for every layer
+    for l in range(num_layers):
+        _boxes, _box_scores = yolo_boxes_and_scores(yolo_outputs[l],
+                                                    anchors[anchor_mask[l]], num_classes, input_shape, image_shape)
+        boxes.append(_boxes)
+        box_scores.append(_box_scores)
+
+    boxes = K.concatenate(boxes, axis=0)
+    box_scores = K.concatenate(box_scores, axis=0)
+    # discard boxes that have low score
+    mask = box_scores >= score_threshold
+    max_boxes_tensor = K.constant(max_boxes, dtype='int32')
+    boxes_ = []
+    scores_ = []
+    classes_ = []
+
+    # perform nms for every class
+    for c in range(num_classes):
+        class_boxes = tf.boolean_mask(boxes, mask[:, c])
+        class_box_scores = tf.boolean_mask(box_scores[:, c], mask[:, c])
+
+        # tf.image.non_max_suppression
+        nms_index = tf.image.non_max_suppression(
+            class_boxes, class_box_scores, max_boxes_tensor, iou_threshold=iou_threshold)
+
+        class_boxes = K.gather(class_boxes, nms_index)
+        class_box_scores = K.gather(class_box_scores, nms_index)
+        classes = K.ones_like(class_box_scores, 'int32') * c
+        boxes_.append(class_boxes)
+        scores_.append(class_box_scores)
+        classes_.append(classes)
+    boxes_ = K.concatenate(boxes_, axis=0)
+    scores_ = K.concatenate(scores_, axis=0)
+    classes_ = K.concatenate(classes_, axis=0)
+
+    return boxes_, scores_, classes_
