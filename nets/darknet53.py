@@ -6,13 +6,13 @@
 # software: PyCharm
 
 from functools import wraps
-from keras.layers import Conv2D, Add, ZeroPadding2D, Concatenate
+from keras.layers import Conv2D, Add, ZeroPadding2D, Concatenate, UpSampling2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.normalization import BatchNormalization
 from keras.regularizers import l2
 from utils.utils import compose
 from nets.mish import Mish
-import keras.backend as K
+import keras as keras
 import keras.layers as layers
 import tensorflow as tf
 
