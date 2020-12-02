@@ -89,4 +89,4 @@ On the COCO datasets the 9 clustera  were: (10× 13); (16× 30); (33× 23); (30�
 - [x] WBF(Weighted-Boxes-Fusion)  postprocess <https://arxiv.org/abs/1910.13302>
 - [x] soft NMS
 - [x] Gaussian YOLOv3
-
+- [x] ASFF
