@@ -141,20 +141,21 @@ class WeightsNormalize(layers.Layer):
 
     def __init__(self, **kwargs):
         super(WeightsNormalize, self).__init__(**kwargs)
-        self.add = layers.Add()
+
+        self.conv = layers.Conv2D(3, kernel_size=1)
+        self.concat = layers.Concatenate(axis=-1)
+        self.softmax = layers.Softmax()
 
     def call(self, inputs, **kwargs):
-        input1 = K.exp(inputs[0])
-        input2 = K.exp(inputs[1])
-        input3 = K.exp(inputs[2])
+        x = self.concat(inputs)
+        x = self.conv(x)
+        x = self.softmax(x)
 
-        inputs_sum = self.add([input1, input2, input3])
+        results = [x[..., 0:1],
+                   x[..., 1:2],
+                   x[..., 2:3]]
 
-        input1 = input1 / inputs_sum
-        input2 = input2 / inputs_sum
-        input3 = input3 / inputs_sum
-
-        return [input1, input2, input3]
+        return results
 
 
 class FeatureFusion(layers.Layer):
@@ -168,6 +169,17 @@ class FeatureFusion(layers.Layer):
                   tf.multiply(inputs[4], inputs[5])
 
         return results
+
+
+def make_five_layers(x, num_filters):
+    # five convolutional layers
+    x = DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+    x = DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
+    x = DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+    x = DarknetConv2D_BN_Leaky(num_filters * 2, (3, 3))(x)
+    x = DarknetConv2D_BN_Leaky(num_filters, (1, 1))(x)
+
+    return x
 
 
 # ---------------------------------------------------
@@ -185,35 +197,47 @@ def darknet_asff_body(x):
     x = resblock_body(x, 1024, 4)
     feat3 = x  # 13*13*1024
 
+    feat3_last = make_five_layers(feat3, num_filters=512)
+    feat3_last_up = compose(DarknetConv2D_BN_Leaky(256, (1, 1)),
+                            UpSampling2D(2))(feat3_last)
+
+    feat2_last = Concatenate()([feat3_last_up, feat2])
+    feat2_last = make_five_layers(feat2_last, num_filters=256)
+    feat2_last_up = compose(DarknetConv2D_BN_Leaky(128, (1, 1)),
+                            UpSampling2D(2))(feat2_last)
+
+    feat1_last = Concatenate()([feat2_last_up, feat1])
+    feat1_last = make_five_layers(feat1_last, 128)
+
     # apply adaptive spatial feature fusion
-    feat3_2 = Conv2D(512, 1, padding='same', name='feat3_2')(feat3)
+    feat3_2 = DarknetConv2D_BN_Leaky(256, (1, 1), name='feat3_2')(feat3_last)
     feat3_2 = layers.UpSampling2D(size=(2, 2), name='feat3_2_upsample')(feat3_2)
 
-    feat3_1 = Conv2D(256, 1, padding='same', name='feat3_1')(feat3)
+    feat3_1 = DarknetConv2D_BN_Leaky(128, (1, 1), name='feat3_1')(feat3_last)
     feat3_1 = layers.UpSampling2D(size=(4, 4), name='feat3_1_upsample')(feat3_1)
 
-    feat2_1 = Conv2D(256, 1, padding='same', name='feat2_1')(feat2)
+    feat2_1 = DarknetConv2D_BN_Leaky(128, (1, 1), name='feat2_1')(feat2_last)
     feat2_1 = layers.UpSampling2D(size=(2, 2), name='feat2_1_upsample')(feat2_1)
 
-    feat2_3 = Conv2D(1024, 3, strides=2, padding='same', name='feat2_3')(feat2)
+    feat2_3 = DarknetConv2D_BN_Leaky(512, (3, 3), strides=2, padding='same', name='feat2_3')(feat2_last)
 
-    feat1_2 = Conv2D(512, 3, strides=2, padding='same', name='feat1_2')(feat1)
+    feat1_2 = DarknetConv2D_BN_Leaky(256, (3, 3), strides=2, padding='same', name='feat1_2')(feat1_last)
 
-    feat1_3 = Conv2D(1024, 3, strides=2, padding='same', name='feat1_3')(feat1)
+    feat1_3 = DarknetConv2D_BN_Leaky(512, (3, 3), strides=2, padding='same', name='feat1_3')(feat1_last)
     feat1_3 = layers.MaxPool2D(pool_size=(3, 3), strides=2, padding='same', name='feat1_3_pool')(feat1_3)
 
     # compute importance weights
-    feat1_weights = Conv2D(256, 1, name='feat1_weights')(feat1)
-    feat2_1_weights = Conv2D(256, 1, name='feat2_1_weights')(feat2_1)
-    feat3_1_weights = Conv2D(256, 1, name='feat3_1_weights')(feat3_1)
+    feat1_weights = DarknetConv2D_BN_Leaky(16, (1, 1), name='feat1_weights')(feat1)
+    feat2_1_weights = DarknetConv2D_BN_Leaky(16, (1, 1), name='feat2_1_weights')(feat2_1)
+    feat3_1_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat3_1_weights')(feat3_1)
 
-    feat2_weights = Conv2D(512, 1, name='feat2_weights')(feat2)
-    feat3_2_weights = Conv2D(512, 1, name='feat3_2_weights')(feat3_2)
-    feat1_2_weights = Conv2D(512, 1, name='feat1_2_weights')(feat1_2)
+    feat2_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat2_weights')(feat2)
+    feat3_2_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat3_2_weights')(feat3_2)
+    feat1_2_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat1_2_weights')(feat1_2)
 
-    feat3_weights = Conv2D(1024, 1, name='feat3_weights')(feat3)
-    feat2_3_weights = Conv2D(1024, 1, name='feat2_3_weights')(feat2_3)
-    feat1_3_weights = Conv2D(1024, 1, name='feat1_3_weights')(feat1_3)
+    feat3_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat3_weights')(feat3)
+    feat2_3_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat2_3_weights')(feat2_3)
+    feat1_3_weights = DarknetConv2D_BN_Leaky(16, 1, name='feat1_3_weights')(feat1_3)
 
     feat1_weights, feat2_1_weights, feat3_1_weights = WeightsNormalize()([feat1_weights,
                                                                           feat2_1_weights,
@@ -225,25 +249,23 @@ def darknet_asff_body(x):
     feat3_weights, feat2_3_weights, feat1_3_weights = WeightsNormalize()([feat3_weights,
                                                                           feat2_3_weights,
                                                                           feat1_3_weights])
-    feat1_fusion = FeatureFusion()([feat1, feat1_weights, feat2_1, feat2_1_weights, feat3_1, feat3_1_weights])
-    feat2_fusion = FeatureFusion()([feat2, feat2_weights, feat1_2, feat1_2_weights, feat3_2, feat3_2_weights])
-    feat3_fusion = FeatureFusion()([feat3, feat3_weights, feat1_3, feat1_3_weights, feat2_3, feat2_3_weights])
+    feat1_fusion = FeatureFusion()([feat1_last, feat1_weights, feat2_1, feat2_1_weights, feat3_1, feat3_1_weights])
+    feat2_fusion = FeatureFusion()([feat2_last, feat2_weights, feat1_2, feat1_2_weights, feat3_2, feat3_2_weights])
+    feat3_fusion = FeatureFusion()([feat3_last, feat3_weights, feat1_3, feat1_3_weights, feat2_3, feat2_3_weights])
 
     return feat1_fusion, feat2_fusion, feat3_fusion
 
 
 if __name__ == '__main__':
-    import keras
-
     inputs_ = keras.Input(shape=(416, 416, 3))
-    feature1_, feature2_, feature3_ = darknet_asff_body(inputs_)  # Trainable params: 53,897,696
-    # feature1_, feature2_, feature3_ = csp_darknet_body(inputs_)  # Trainable params: 26,617,184
-    # feature1_, feature2_, feature3_ = darknet_body(inputs_)  # Trainable params: 40,584,928
+    results_ = darknet_asff_body(inputs_)
 
-    # backbone
-    backbone = keras.Model(inputs_, [feature1_, feature2_, feature3_])
+    y1 = DarknetConv2D_BN_Leaky(128 * 2, 3, padding='same')(results_[0])
+    y1 = DarknetConv2D_BN_Leaky(3 * 85, 1)(y1)
+    y2 = DarknetConv2D_BN_Leaky(256 * 2, 3, padding='same')(results_[1])
+    y2 = DarknetConv2D_BN_Leaky(3 * 85, 1)(y2)
+    y3 = DarknetConv2D_BN_Leaky(512 * 2, 3, padding='same')(results_[2])
+    y3 = DarknetConv2D_BN_Leaky(3 * 85, 1)(y3)
+    model = keras.Model(inputs_, [y1, y2, y3])
 
-    # darknet53 trainable params: 40,584,928
-    # cspdarknet 53 trainable params: 26,617,184
-    # so, the params if cspdarkbet53 is much smaller than draknet53.
-    backbone.summary()
+    model.summary()
